@@ -104,6 +104,8 @@ function stopTtl (db, callback) {
 }
 
 function ttlon (db, keys, ttl, callback) {
+  if (!keys.length) return process.nextTick(callback)
+
   const exp = new Date(Date.now() + ttl)
   const batch = []
   const sub = db._ttl.sub
@@ -118,8 +120,6 @@ function ttlon (db, keys, ttl, callback) {
         batch.push({ type: 'put', key: prefixKey(db, key), value: encode(exp) })
       })
 
-      if (!batch.length) return callback()
-
       batchFn(batch, { keyEncoding: 'binary', valueEncoding: 'binary' }, function (err) {
         if (err) { db.emit('error', err) }
         callback()
@@ -129,6 +129,8 @@ function ttlon (db, keys, ttl, callback) {
 }
 
 function ttloff (db, keys, callback) {
+  if (!keys.length) return callback && process.nextTick(callback)
+
   const batch = []
   const sub = db._ttl.sub
   const getFn = (sub ? sub.get.bind(sub) : db.get.bind(db))
@@ -136,8 +138,6 @@ function ttloff (db, keys, callback) {
   const decode = db._ttl.encoding.decode
   const done = after(keys.length, function (err) {
     if (err) db.emit('error', err)
-
-    if (!batch.length) return callback && callback()
 
     batchFn(batch, { keyEncoding: 'binary', valueEncoding: 'binary' }, function (err) {
       if (err) { db.emit('error', err) }
