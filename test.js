@@ -6,6 +6,7 @@ const xtend = require('xtend')
 const sublevel = require('subleveldown')
 const random = require('slump')
 const bytewise = require('bytewise')
+const after = require('after')
 const bwEncode = bytewise.encode
 
 function ltest (desc, opts, cb, tapeOpts) {
@@ -55,6 +56,16 @@ function db2arr (t, db, callback, opts) {
   concat(db.iterator(opts), function (err, arr) {
     if (err) return t.fail(err)
     callback(arr)
+  })
+}
+
+function waitForSweep (db, callback) {
+  // Keep test alive
+  var timer = setInterval(function () {}, 1000)
+
+  db.once('ttl:sweep', function () {
+    clearInterval(timer)
+    callback()
   })
 }
 
@@ -145,6 +156,7 @@ test('single ttl entry', function (t, db) {
   t.end()
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('single ttl entry with put', function (t, db) {
   db.put('foo', 'foovalue', function (err) {
     t.notOk(err, 'no error')
@@ -166,6 +178,7 @@ test('single ttl entry with put', function (t, db) {
   })
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('single ttl entry with put (custom ttlEncoding)', function (t, db) {
   db.put('foo', 'foovalue', function (err) {
     t.notOk(err, 'no error')
@@ -187,6 +200,7 @@ test('single ttl entry with put (custom ttlEncoding)', function (t, db) {
   })
 }, { ttlEncoding: bytewise })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('multiple ttl entries with put', function (t, db) {
   var expect = function (delay, keys, cb) {
     verifyIn(t, db, delay, function (arr) {
@@ -222,6 +236,7 @@ test('multiple ttl entries with put', function (t, db) {
   expect(500, 0, t.end.bind(t))
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('multiple ttl entries with put (custom ttlEncoding)', function (t, db) {
   var expect = function (delay, keys, cb) {
     verifyIn(t, db, delay, function (arr) {
@@ -257,6 +272,7 @@ test('multiple ttl entries with put (custom ttlEncoding)', function (t, db) {
   expect(500, 0, t.end.bind(t))
 }, { ttlEncoding: bytewise })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('multiple ttl entries with batch-put', function (t, db) {
   var expect = function (delay, keys, cb) {
     verifyIn(t, db, delay, function (arr) {
@@ -299,6 +315,7 @@ test('multiple ttl entries with batch-put', function (t, db) {
   expect(20, 4, t.end.bind(t))
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('multiple ttl entries with batch-put (custom ttlEncoding)', function (t, db) {
   var expect = function (delay, keys, cb) {
     verifyIn(t, db, delay, function (arr) {
@@ -341,6 +358,7 @@ test('multiple ttl entries with batch-put (custom ttlEncoding)', function (t, db
   expect(20, 4, t.end.bind(t))
 }, { ttlEncoding: bytewise })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('prolong entry life with additional put', function (t, db) {
   var retest = function (delay, cb) {
     setTimeout(function () {
@@ -361,6 +379,7 @@ test('prolong entry life with additional put', function (t, db) {
   retest(180, t.end.bind(t))
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('prolong entry life with additional put (custom ttlEncoding)', function (t, db) {
   var retest = function (delay, cb) {
     setTimeout(function () {
@@ -381,45 +400,50 @@ test('prolong entry life with additional put (custom ttlEncoding)', function (t,
 }, { ttlEncoding: bytewise })
 
 test('prolong entry life with ttl(key, ttl)', function (t, db) {
-  var retest = function (delay, cb) {
-    setTimeout(function () {
-      db.ttl('bar', 250)
-      verifyIn(t, db, 25, function (arr) {
-        contains(t, arr, 'bar', 'barvalue')
-        contains(t, arr, 'foo', 'foovalue')
-        contains(t, arr, /!ttl!x!\d{13}!bar/, 'bar')
-        contains(t, arr, '!ttl!bar', /\d{13}/)
-        cb && cb()
-      })
-    }, delay)
-  }
+  var next = after(2, function () {
+    db.ttl('bar', 10e3, function () {
+      setTimeout(function () {
+        waitForSweep(db, function () {
+          db2arr(t, db, function (arr) {
+            contains(t, arr, 'bar', 'barvalue')
+            contains(t, arr, /!ttl!x!\d{13}!bar/, 'bar')
+            contains(t, arr, '!ttl!bar', /\d{13}/)
 
-  db.put('foo', 'foovalue')
-  db.put('bar', 'barvalue')
-  for (var i = 0; i < 180; i += 20) retest(i)
-  retest(180, t.end.bind(t))
+            t.is(arr.length, 3, 'does not contain foo')
+            t.end()
+          })
+        })
+      }, 500)
+    })
+  })
+
+  db.put('foo', 'foovalue', { ttl: 100 }, next)
+  db.put('bar', 'barvalue', { ttl: 100 }, next)
 })
 
 test('prolong entry life with ttl(key, ttl) (custom ttlEncoding)', function (t, db) {
-  var retest = function (delay, cb) {
-    setTimeout(function () {
-      db.ttl('bar', 250)
-      verifyIn(t, db, 25, function (arr) {
-        contains(t, arr, Buffer.from('bar'), Buffer.from('barvalue'))
-        contains(t, arr, Buffer.from('foo'), Buffer.from('foovalue'))
-        contains(t, arr, bwRange(['ttl', 'x']), bwEncode('bar'))
-        contains(t, arr, bwEncode(['ttl', 'bar']), bwRange())
-        cb && cb()
-      }, { keyEncoding: 'binary', valueEncoding: 'binary' })
-    }, delay)
-  }
+  var next = after(2, function () {
+    db.ttl('bar', 10e3, function () {
+      setTimeout(function () {
+        waitForSweep(db, function () {
+          db2arr(t, db, function (arr) {
+            contains(t, arr, Buffer.from('bar'), Buffer.from('barvalue'))
+            contains(t, arr, bwRange(['ttl', 'x']), bwEncode('bar'))
+            contains(t, arr, bwEncode(['ttl', 'bar']), bwRange())
 
-  db.put('foo', 'foovalue')
-  db.put('bar', 'barvalue')
-  for (var i = 0; i < 180; i += 20) retest(i)
-  retest(180, t.end.bind(t))
+            t.is(arr.length, 3, 'does not contain foo')
+            t.end()
+          }, { keyEncoding: 'binary', valueEncoding: 'binary' })
+        })
+      }, 500)
+    })
+  })
+
+  db.put('foo', 'foovalue', { ttl: 100 }, next)
+  db.put('bar', 'barvalue', { ttl: 100 }, next)
 }, { ttlEncoding: bytewise })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('del removes both key and its ttl meta data', function (t, db) {
   db.put('foo', 'foovalue')
   db.put('bar', 'barvalue', { ttl: 250 })
@@ -443,6 +467,7 @@ test('del removes both key and its ttl meta data', function (t, db) {
   })
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('del removes both key and its ttl meta data (value encoding)', function (t, db) {
   db.put('foo', { v: 'foovalue' })
   db.put('bar', { v: 'barvalue' }, { ttl: 250 })
@@ -466,6 +491,7 @@ test('del removes both key and its ttl meta data (value encoding)', function (t,
   }, { valueEncoding: 'utf8' })
 }, { keyEncoding: 'utf8', valueEncoding: 'json' })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('del removes both key and its ttl meta data (custom ttlEncoding)', function (t, db) {
   db.put('foo', { v: 'foovalue' })
   db.put('bar', { v: 'barvalue' }, { ttl: 250 })
@@ -489,6 +515,7 @@ test('del removes both key and its ttl meta data (custom ttlEncoding)', function
   }, { valueEncoding: 'utf8' })
 }, { keyEncoding: 'utf8', valueEncoding: 'json', ttlEncoding: bytewise })
 
+// TODO: rewrite to be less sensitive and more a unit test
 function wrappedTest () {
   var intervals = 0
   var _setInterval = global.setInterval
@@ -537,6 +564,7 @@ function wrappedTest () {
 
 wrappedTest()
 
+// TODO: rewrite to be less sensitive and more a unit test
 function put (timeout, opts) {
   return function (t, db) {
     db.put('foo', 'foovalue', opts, function (err) {
@@ -679,6 +707,7 @@ ltest('data and subleveldown ttl meta data separation (custom ttlEncoding)', fun
   })
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 ltest('that subleveldown data expires properly', function (t, db) {
   var meta = sublevel(db, 'meta')
   var ttldb = ttl(db, { checkFrequency: 25, sub: meta })
@@ -692,6 +721,7 @@ ltest('that subleveldown data expires properly', function (t, db) {
   })
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 ltest('that subleveldown data expires properly (custom ttlEncoding)', function (t, db) {
   var meta = sublevel(db, 'meta')
   var ttldb = ttl(db, { checkFrequency: 25, sub: meta, ttlEncoding: bytewise })
@@ -705,6 +735,7 @@ ltest('that subleveldown data expires properly (custom ttlEncoding)', function (
   })
 })
 
+// TODO: rewrite to be less sensitive and more a unit test
 test('prolong entry with PUT should not duplicate the TTL key', function (t, db) {
   var retest = function (delay, cb) {
     setTimeout(function () {
